@@ -1,16 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RefObject } from "react";
+import type { MouseEvent, PointerEvent, RefObject } from "react";
 import { useStagePlayback } from "@phantom/ui";
 import type { MediaState } from "./use-media";
 import type { Display } from "./use-display";
 
 export const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 
-export function useControls(videoRef: RefObject<HTMLVideoElement | null>, media: MediaState, display: Display, toggleCaptions: () => void) {
+export function useControls(videoRef: RefObject<HTMLVideoElement | null>, media: MediaState, display: Display, toggleCaptions: () => void, canSeek: boolean) {
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchTap = useRef({ touch: false, hidden: false });
+  const tapSeekUntil = useRef(0);
+  const idleRef = useRef(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [menu, setMenu] = useState<"settings" | "sleep" | null>(null);
   const { changeVolume, toggleMute, seekBy: seekMediaBy, changeSpeed: changeMediaSpeed, speed } = media;
@@ -46,7 +49,49 @@ export function useControls(videoRef: RefObject<HTMLVideoElement | null>, media:
     setMenu(null);
   }, [changeMediaSpeed]);
 
-  const onVideoClick = useCallback(() => {
+  const hideControls = useCallback(() => {
+    if (videoRef.current?.paused) return;
+    if (controlsTimer.current) clearTimeout(controlsTimer.current);
+    setControlsVisible(false);
+  }, [videoRef]);
+
+  // Read before the stage's touchstart reveals the controls, so a tap on a bare picture only brings them back.
+  const onVideoPointerDown = useCallback((event: PointerEvent<HTMLVideoElement>) => {
+    touchTap.current = { touch: event.pointerType === "touch", hidden: idleRef.current };
+  }, []);
+
+  const onVideoClick = useCallback((event: MouseEvent<HTMLVideoElement>) => {
+    if (touchTap.current.touch) {
+      // Touch follows the phone convention: a tap shows or hides the controls, a double tap on either side
+      // skips, and further taps on that side keep skipping.
+      const rect = event.currentTarget.getBoundingClientRect();
+      const ratio = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0.5;
+      const direction = !canSeek ? 0 : ratio < 0.4 ? -1 : ratio > 0.6 ? 1 : 0;
+      const now = performance.now();
+      if (direction !== 0 && now < tapSeekUntil.current) {
+        tapSeekUntil.current = now + 600;
+        seekWithFeedback(direction);
+        return;
+      }
+      if (clickTimer.current) {
+        clearTimeout(clickTimer.current);
+        clickTimer.current = null;
+        if (direction === 0) {
+          toggleFullscreen();
+        } else {
+          tapSeekUntil.current = now + 600;
+          seekWithFeedback(direction);
+        }
+        return;
+      }
+      const { hidden } = touchTap.current;
+      clickTimer.current = setTimeout(() => {
+        clickTimer.current = null;
+        if (!hidden) hideControls();
+      }, 260);
+      return;
+    }
+
     if (clickTimer.current) {
       clearTimeout(clickTimer.current);
       clickTimer.current = null;
@@ -58,7 +103,7 @@ export function useControls(videoRef: RefObject<HTMLVideoElement | null>, media:
       clickTimer.current = null;
       togglePlay();
     }, 220);
-  }, [toggleFullscreen, togglePlay]);
+  }, [canSeek, hideControls, seekWithFeedback, toggleFullscreen, togglePlay]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -139,11 +184,6 @@ export function useControls(videoRef: RefObject<HTMLVideoElement | null>, media:
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [videoRef, changeSpeed, changeVolume, handlePlaybackKey, showControls, speed, toggleCaptions, toggleFullscreen, toggleMute, togglePip]);
 
-  const hideControls = useCallback(() => {
-    if (videoRef.current?.paused) return;
-    if (controlsTimer.current) clearTimeout(controlsTimer.current);
-    setControlsVisible(false);
-  }, [videoRef]);
   useEffect(() => {
     const video = videoRef.current;
     const reveal = () => setControlsVisible(true);
@@ -157,10 +197,13 @@ export function useControls(videoRef: RefObject<HTMLVideoElement | null>, media:
     };
   }, [videoRef]);
 
+  const idle = media.playing && !controlsVisible && menu === null;
+  useEffect(() => { idleRef.current = idle; }, [idle]);
+
   return {
-    idle: media.playing && !controlsVisible && menu === null,
+    idle,
     feedback, togglePlay, seekWithFeedback, toggleFullscreen, changeSpeed,
-    onVideoClick, showControls, hideControls, menu, changeMenu,
+    onVideoClick, onVideoPointerDown, showControls, hideControls, menu, changeMenu,
   };
 }
 

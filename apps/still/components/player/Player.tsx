@@ -12,6 +12,7 @@ import { useTimeline } from "./use-timeline";
 import { useDisplay } from "./use-display";
 import { useControls } from "./use-controls";
 import { useCaptions } from "./use-captions";
+import { useMediaSession } from "./use-media-session";
 import { ConnectionWarning } from "./ConnectionWarning";
 import { PlayerStage } from "./PlayerStage";
 
@@ -34,13 +35,15 @@ interface PlayerProps {
   onPlaybackSeek?: () => void;
   title?: string;
   subtitle?: string;
+  /** Shown beside the title on the lock screen and in media notifications. */
+  artwork?: string;
   chatOpen?: boolean;
   onChatToggle?: () => void;
 }
 
 export function Player({ src, delivery = "hls", audioOnly = false, onAudioOnlyChange, sourceSelection, seekRequest, storyboardUrl, onMediaError, onVideoSize, segments = EMPTY_PLAYBACK_SEGMENTS, segmentAppearances,
   startTime = 0, isLive = false, dvrMode = false, onTimeUpdate, onPlaybackSeek,
-  title = "Twitch video", subtitle, chatOpen = false, onChatToggle }: PlayerProps) {
+  title = "Twitch video", subtitle, artwork, chatOpen = false, onChatToggle }: PlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const cuesRef = useRef<HTMLDivElement>(null);
@@ -53,7 +56,8 @@ export function Player({ src, delivery = "hls", audioOnly = false, onAudioOnlyCh
   const timeline = useTimeline(media, isLive, dvrMode);
   const display = useDisplay(containerRef, videoRef);
   const captions = useCaptions(videoRef, cuesRef, src);
-  const controls = useControls(videoRef, media, display, captions.toggle);
+  const controls = useControls(videoRef, media, display, captions.toggle, timeline.canSeek);
+  useMediaSession(videoRef, { title, artist: subtitle, artwork, seekable: !isLive, onSeek: syncDisplayedTime });
 
   return (
     <PlayerStage ref={containerRef} title={title} subtitle={subtitle} idle={controls.idle} crowded={hls.connectionUnstable}
@@ -61,7 +65,7 @@ export function Player({ src, delivery = "hls", audioOnly = false, onAudioOnlyCh
       picture={<>
         <video ref={videoRef} className="absolute inset-0" playsInline preload="metadata"
           controlsList="nodownload noremoteplayback" disablePictureInPicture={!display.pipSupported}
-          onClick={controls.onVideoClick} />
+          onClick={controls.onVideoClick} onPointerDown={controls.onVideoPointerDown} />
         <div ref={cuesRef} className="stage-cues stage-cues-backdrop" />
       </>}>
       {hls.connectionUnstable && <ConnectionWarning />}

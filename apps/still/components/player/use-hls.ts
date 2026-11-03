@@ -8,6 +8,7 @@ import { CONNECTION_ERROR_DETAILS, createConnectionHealth } from "@/lib/media/co
 import { createLiveLatencyController } from "@/lib/media/live-latency";
 import { LiveAbrController } from "@/lib/media/live-abr";
 import { createLiveFragmentLoader } from "@/lib/media/live-loader";
+import { playbackEnvironment, prefersNativeHls } from "@/lib/media/engine";
 
 interface HlsOptions {
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -91,7 +92,8 @@ export function useHls({ videoRef, src, delivery, audioOnly, isLive, dvrMode, st
     const plainLive = isLive && !dvrMode;
     const progressive = plainLive && typeof fetch !== "undefined" && typeof AbortController !== "undefined" &&
       typeof ReadableStream !== "undefined" && typeof Request !== "undefined";
-    const native = delivery === "file" || !Hls.isSupported();
+    const native = delivery === "file" || !Hls.isSupported() || prefersNativeHls(playbackEnvironment(video), isLive);
+    const startPosition = !isLive || dvrMode ? resumeTime.current ?? startTime : 0;
     let attachedHls: Hls | null = null;
     let segmentDuration = 2;
     let predictiveTimeline = false;
@@ -177,10 +179,10 @@ export function useHls({ videoRef, src, delivery, audioOnly, isLive, dvrMode, st
     const onLoadedMetadata = () => {
       metadataLoaded = true;
       onVideoResize();
-      if ((!isLive || dvrMode) && (resumeTime.current ?? startTime) > 0) {
-        const position = resumeTime.current ?? startTime;
-        video.currentTime = position;
-        syncDisplayedTime(position);
+      // hls.js already started at this position; seeking again would flush what it buffered there.
+      if (startPosition > 0 && Math.abs(video.currentTime - startPosition) > 0.5) {
+        video.currentTime = startPosition;
+        syncDisplayedTime(startPosition);
       }
       setLoading(false);
       video.playbackRate = plainLive ? 1 : resumeSpeed.current;
@@ -214,6 +216,8 @@ export function useHls({ videoRef, src, delivery, audioOnly, isLive, dvrMode, st
       capLevelToPlayerSize: true,
       startLevel: -1,
       autoStartLoad: !(isLive || dvrMode),
+      // A resumed recording loads its first segment at the resume point rather than at zero.
+      startPosition: !isLive && startPosition > 0 ? startPosition : -1,
       backBufferLength: isLive && !dvrMode ? 15 : 30,
       maxBufferLength: isLive && !dvrMode ? 8 : 30,
       maxMaxBufferLength: isLive && !dvrMode ? 20 : 60,
@@ -277,10 +281,9 @@ export function useHls({ videoRef, src, delivery, audioOnly, isLive, dvrMode, st
         // An archive is opened to catch up, so it starts from the beginning. Only the plain live stream starts at the edge.
         hls.startLoad(dvrMode ? startTime : -1);
       }
-      if ((!isLive || dvrMode) && (resumeTime.current ?? startTime) > 0) {
-        const position = resumeTime.current ?? startTime;
-        video.currentTime = position;
-        syncDisplayedTime(position);
+      if (startPosition > 0) {
+        if (dvrMode) video.currentTime = startPosition;
+        syncDisplayedTime(startPosition);
       }
       setLoading(false);
     });

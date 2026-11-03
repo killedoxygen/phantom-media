@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { readStoredPlayback, storePlayback } from "@/lib/history";
 import { useHistoryRecord } from "../history/use-history";
@@ -121,10 +121,13 @@ export function useWatchSession() {
   }, [loadChannel, loadVod, routeChannel, routeStartTime, routeVodId]);
 
   const activeVodId = vodData?.vodId;
+  const storedTime = useRef(-Infinity);
   const onVodTimeUpdate = useCallback(
     (time: number) => {
       setPlayerTime(time);
-      if (activeVodId) {
+      // Storage writes block the main thread on phones; a resume point a few seconds old is just as good.
+      if (activeVodId && Math.abs(time - storedTime.current) >= 5) {
+        storedTime.current = time;
         storePlayback({ kind: "vod", id: activeVodId }, time);
       }
     },

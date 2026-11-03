@@ -69,7 +69,7 @@ export function VodView({ vodData, masterUrl, startTime, playerTime, onTimeUpdat
     <div className="media-content still-watch relative pb-8">
       <div className="pt-2">
         <WatchLayout chatOpen={chatOpen} chatState={watchChat.state}
-          video={masterUrl ? <Player seekRequest={seekRequest} src={sourceUrl} audioOnly={mode === "audio"} title={vodData.title || `Video ${vodData.vodId}`} subtitle={vodData.channelDisplayName || vodData.channel}
+          video={masterUrl ? <Player seekRequest={seekRequest} src={sourceUrl} audioOnly={mode === "audio"} title={vodData.title || `Video ${vodData.vodId}`} subtitle={vodData.channelDisplayName || vodData.channel} artwork={vodData.previewThumbnailURL}
             startTime={sourceTime} isLive={Boolean(vodData.isLiveArchive)} dvrMode={Boolean(vodData.isLiveArchive)}
             segments={timelineSegments} storyboardUrl={vodData.seekPreviewsURL} sourceSelection={sourceSelection}
             onAudioOnlyChange={vodData.qualities.some(variant => variant.kind === "audio") ? enabled => { setSourceTime(playerTime); setMode(enabled ? "audio" : "video"); } : undefined}
