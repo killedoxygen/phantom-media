@@ -1171,6 +1171,10 @@
   box-shadow: 0 18px 50px #0009;
   overflow: hidden;
 }
+.stage-listening-cover[data-shape="portrait"] {
+  aspect-ratio: 2 / 3;
+  width: clamp(48px, 17.4cqw, 174px);
+}
 .stage-listening-cover img {
   position: absolute;
   inset: 0;
@@ -1222,6 +1226,7 @@
   .stage:not(:fullscreen) > .stage-listening { grid-area: 1 / 1 / 2 / 2; position: relative; aspect-ratio: 16 / 9; }
   /* The stage is short here: a larger cover keeps the badge clear of the transport resting on it. */
   .stage-listening-cover { width: min(39cqw, 150px); }
+  .stage-listening-cover[data-shape="portrait"] { width: min(26cqw, 100px); }
   .stage-listening-badge { font-size: 10px; padding: 2px 7px; bottom: 6px; }
 }
 @container (max-width: 340px) {

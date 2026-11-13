@@ -10,8 +10,24 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Artwork, MotionPresence, ScrubBar, StageChrome, StageControl, StageSettings, StageTransport, PLAYER_SEEK_SECONDS, useStagePlayback } from "@phantom/ui";
-import type { SettingsSection, SignalStrength } from "@phantom/ui";
+import {
+  Artwork,
+  ListeningControl,
+  ListeningStage,
+  MotionPresence,
+  ScrubBar,
+  StageChrome,
+  StageControl,
+  StageSettings,
+  StageTransport,
+  PLAYER_SEEK_SECONDS,
+  describeListeningPlan,
+  listeningSettingsSections,
+  useAudioEnhancement,
+  useListening,
+  useStagePlayback,
+} from "@phantom/ui";
+import type { ListeningPlan, SettingsSection, SignalStrength } from "@phantom/ui";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -97,6 +113,11 @@ interface VideoStageProps {
   onEpisodesOpenChange?: (open: boolean) => void;
   chapters?: readonly Chapter[];
   upNext?: { episode: EpisodeSummary; onPlay: () => void };
+  /** What listening does for the attached source, from the router; null while watching or attaching. */
+  listeningPlan?: ListeningPlan | null;
+  /** The cover shown while listening, and the image blurred behind it. */
+  listeningArtwork?: string | null;
+  listeningBackdrop?: string | null;
   children?: ReactNode;
 }
 
@@ -138,6 +159,11 @@ const CUE_SIZE_CLASS: Record<CaptionSize, string> = {
 
 const NEVER_CHANGES = () => () => {};
 const pipSupported = () => document.pictureInPictureEnabled;
+// iPhone and iPad suspend Web Audio with the screen locked, which would silence background listening.
+const isMobileWebKit = () =>
+  "ManagedMediaSource" in window && navigator.maxTouchPoints > 1;
+const LISTENING_NOTE =
+  "Plays only the sound, like a podcast. Uses the source's audio-only stream when it has one, or else its lightest picture.";
 const saysNoOnServer = () => false;
 
 const COARSE_QUERY = "(pointer: coarse)";
@@ -189,6 +215,9 @@ export function VideoStage({
   onEpisodesOpenChange,
   chapters = [],
   upNext,
+  listeningPlan = null,
+  listeningArtwork,
+  listeningBackdrop,
   children,
 }: VideoStageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -220,6 +249,25 @@ export function VideoStage({
     isCoarsePointer,
     saysNoOnServer,
   );
+  const mobileWebKit = useSyncExternalStore(
+    NEVER_CHANGES,
+    isMobileWebKit,
+    saysNoOnServer,
+  );
+  const {
+    listening,
+    voiceBoost,
+    mono,
+    setMode: setListeningMode,
+    setVoiceBoost,
+    setMono,
+  } = useListening();
+  // The element is CORS-enabled for every source, so Web Audio can read it wherever it keeps running.
+  const { available: enhancement } = useAudioEnhancement(videoRef, {
+    voiceBoost,
+    mono,
+    supported: !mobileWebKit,
+  });
 
   const {
     state,
@@ -433,6 +481,14 @@ export function VideoStage({
       if (choice) showFeedback(choice.label);
     },
     [audio, showFeedback, update],
+  );
+
+  const changeListening = useCallback(
+    (next: boolean) => {
+      setListeningMode(next ? "audio" : "video");
+      showFeedback(next ? "Audio only" : "Video");
+    },
+    [setListeningMode, showFeedback],
   );
 
   useEffect(() => {
@@ -730,6 +786,19 @@ export function VideoStage({
       });
     }
 
+    sections.push(
+      ...listeningSettingsSections({
+        listening,
+        onListeningChange: changeListening,
+        note: listening && listeningPlan ? describeListeningPlan(listeningPlan) : LISTENING_NOTE,
+        enhancement,
+        voiceBoost,
+        onVoiceBoostChange: setVoiceBoost,
+        mono,
+        onMonoChange: setMono,
+      }),
+    );
+
     if (sources && sources.options.length > 0) {
       sections.push({
         id: "source",
@@ -749,6 +818,14 @@ export function VideoStage({
     captions,
     changeAudio,
     changeCaption,
+    changeListening,
+    enhancement,
+    listening,
+    listeningPlan,
+    mono,
+    setMono,
+    setVoiceBoost,
+    voiceBoost,
     prefs.captionBackdrop,
     prefs.captionSize,
     prefs.playbackRate,
@@ -762,7 +839,7 @@ export function VideoStage({
 
   const showPoster = Boolean(poster) && status !== "ready";
   const languageSections = settingsSections.filter((section) =>
-    ["language", "audio", "subtitles", "text"].includes(section.id),
+    ["language", "audio", "listening", "voice-boost", "mono", "subtitles", "text"].includes(section.id),
   );
   const playbackSections = settingsSections.filter((section) =>
     ["quality", "speed", "source"].includes(section.id),
@@ -808,6 +885,15 @@ export function VideoStage({
       >
         {tracks}
       </video>
+
+      {listening && status === "ready" && (
+        <ListeningStage
+          artwork={listeningArtwork ?? undefined}
+          backdrop={listeningBackdrop ?? listeningArtwork ?? undefined}
+          playing={state.playing}
+          shape="portrait"
+        />
+      )}
 
       {children}
 
@@ -986,6 +1072,9 @@ export function VideoStage({
         ) : undefined}
         rightExtra={
           <>
+            {status === "ready" && (
+              <ListeningControl listening={listening} onChange={changeListening} />
+            )}
             {episodePanel && (
               <StageControl
                 label="Episodes"
@@ -1008,7 +1097,7 @@ export function VideoStage({
               open={settingsPanel === "playback"}
               onOpenChange={(open) => changeSettingsPanel("playback", open)}
               actions={[
-                ...(status === "ready" && canPictureInPicture ? [{
+                ...(status === "ready" && canPictureInPicture && !listening ? [{
                   label: "Picture in picture",
                   icon: <PictureInPicture {...FILLED_ICON} size={20} />,
                   onClick: togglePictureInPicture,

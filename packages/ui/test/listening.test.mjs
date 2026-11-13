@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  describeListeningPlan, isAudioOnlyCodecs, parseHlsAttributes, pickListeningFile, planHlsListening,
+  describeListeningPlan, isAudioOnlyCodecs, parseHlsAttributes, pickListeningFile, planHlsListening, planLowestRung,
 } from "../src/listening.ts";
 
 const base = "https://media.example/live/master.m3u8";
@@ -47,7 +47,10 @@ test("an alternate audio rendition plays on its own, in the preferred language",
     '#EXT-X-STREAM-INF:BANDWIDTH=5000000,CODECS="avc1.640028,mp4a.40.2",AUDIO="aac"',
     "video/1080.m3u8",
   ].join("\n");
-  assert.equal(planHlsListening(master, base, { language: "en" }).url, "https://media.example/live/audio/en.m3u8");
+  assert.deepEqual(planHlsListening(master, base, { language: "en" }), {
+    kind: "audio", url: "https://media.example/live/audio/en.m3u8", videoBandwidth: 5000000,
+    rendition: { language: "en-us", name: "English" },
+  });
   assert.equal(planHlsListening(master, base).url, "https://media.example/live/audio/es.m3u8");
   assert.equal(planHlsListening(master, base, { language: "fr" }).url, "https://media.example/live/audio/es.m3u8");
 });
@@ -78,4 +81,10 @@ test("files: the smallest one with a known size", () => {
   assert.equal(pickListeningFile(files, file => Number.parseInt(file.key, 10) || undefined)?.key, "360");
   assert.equal(pickListeningFile([{ key: "a" }], () => undefined)?.key, "a");
   assert.equal(pickListeningFile([], () => 1), undefined);
+});
+
+test("an engine's own ladder: the cheapest rung, only when it saves something", () => {
+  assert.deepEqual(planLowestRung("m.mpd", [4_000_000, 600_000, 1_500_000]), { kind: "reduced", url: "m.mpd", bandwidth: 600_000, videoBandwidth: 4_000_000 });
+  assert.deepEqual(planLowestRung("m.mpd", [2_000_000, 0]), { kind: "unavailable" });
+  assert.deepEqual(planLowestRung("m.mpd", [900, 900]), { kind: "unavailable" });
 });

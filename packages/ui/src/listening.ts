@@ -8,8 +8,11 @@
 export type ListeningMode = "video" | "audio";
 
 export type ListeningPlan =
-  /** A stream that carries only sound: an audio-only variant, or an audio rendition played on its own. */
-  | { kind: "audio"; url: string; bandwidth?: number; videoBandwidth?: number }
+  /**
+   * A stream that carries only sound: an audio-only variant, or an audio rendition played on its own.
+   * `rendition` is set for the latter, so a player can check its language against the one the viewer asked for.
+   */
+  | { kind: "audio"; url: string; bandwidth?: number; videoBandwidth?: number; rendition?: { language?: string; name?: string } }
   /** No audio-only stream exists, so the smallest picture plays behind the listening view. */
   | { kind: "reduced"; url: string; bandwidth?: number; videoBandwidth?: number }
   /** The source cannot be thinned. The full source plays behind the listening view. */
@@ -47,7 +50,7 @@ function positive(value?: string) {
 }
 
 interface Variant { url: string; bandwidth?: number; audioOnly: boolean; audioGroup?: string }
-interface Rendition { url: string; group?: string; language?: string; default: boolean; autoselect: boolean }
+interface Rendition { url: string; group?: string; language?: string; name?: string; default: boolean; autoselect: boolean }
 
 function readMaster(text: string, base: string) {
   const variants: Variant[] = [];
@@ -62,7 +65,7 @@ function readMaster(text: string, base: string) {
       const attributes = parseHlsAttributes(line.slice("#EXT-X-MEDIA:".length));
       const url = attributes.TYPE === "AUDIO" && attributes.URI ? absolute(attributes.URI, base) : null;
       if (url) renditions.push({
-        url, group: attributes["GROUP-ID"], language: attributes.LANGUAGE?.toLowerCase(),
+        url, group: attributes["GROUP-ID"], language: attributes.LANGUAGE?.toLowerCase(), name: attributes.NAME,
         default: attributes.DEFAULT === "YES", autoselect: attributes.AUTOSELECT === "YES",
       });
     } else if (!line.startsWith("#") && pending) {
@@ -109,7 +112,10 @@ export function planHlsListening(master: string, masterUrl: string, options: { l
     const language = primaryLanguage(options.language);
     const chosen = (language && usable.find(rendition => primaryLanguage(rendition.language) === language)) ||
       usable.find(rendition => rendition.default) || usable.find(rendition => rendition.autoselect) || usable[0];
-    return { kind: "audio", url: chosen.url, videoBandwidth };
+    return {
+      kind: "audio", url: chosen.url, videoBandwidth,
+      rendition: { ...(chosen.language ? { language: chosen.language } : {}), ...(chosen.name ? { name: chosen.name } : {}) },
+    };
   }
 
   if (video.length > 1) {
@@ -120,6 +126,18 @@ export function planHlsListening(master: string, masterUrl: string, options: { l
     }
   }
   return { kind: "unavailable" };
+}
+
+/**
+ * For players whose engine already knows the bitrate ladder (DASH representations, or HLS levels once parsed):
+ * listening caps playback to the cheapest rung of `url`, when that saves anything.
+ */
+export function planLowestRung(url: string, bitrates: readonly number[]): ListeningPlan {
+  const known = bitrates.filter(rate => Number.isFinite(rate) && rate > 0);
+  if (known.length < 2) return { kind: "unavailable" };
+  const bandwidth = Math.min(...known);
+  const videoBandwidth = Math.max(...known);
+  return bandwidth < videoBandwidth ? { kind: "reduced", url, bandwidth, videoBandwidth } : { kind: "unavailable" };
 }
 
 /**

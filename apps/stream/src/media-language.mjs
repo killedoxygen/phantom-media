@@ -204,3 +204,19 @@ export function matchesAudioLanguage(candidate, preferred, manifest = "") {
     ? available.length === 0
     : available.includes(language);
 }
+
+/**
+ * Whether an audio-only listening stream carries the language the viewer asked for.
+ * An audio-only variant carries the same muxed sound as the picture variants beside it, so it fits whatever they
+ * were verified to carry. An audio rendition must say it is that language, by tag or by name.
+ */
+export function listeningAudioFits(plan, requestedLanguage) {
+  if (!plan?.rendition) return true;
+  const wanted = normalizeAudioLanguage(requestedLanguage);
+  if (wanted === UNVERIFIED_AUDIO_LANGUAGE) return true;
+  const { language, name } = plan.rendition;
+  return (
+    (language !== undefined && normalizeAudioLanguage(language) === wanted) ||
+    (name !== undefined && normalizeAudioLanguage(name) === wanted)
+  );
+}

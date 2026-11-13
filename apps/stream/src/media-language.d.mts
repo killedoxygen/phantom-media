@@ -15,3 +15,7 @@ export declare function matchesAudioLanguage(
   preferred: string,
   manifest?: string,
 ): boolean;
+export declare function listeningAudioFits(
+  plan: { rendition?: { language?: string; name?: string } } | null | undefined,
+  requestedLanguage: string,
+): boolean;

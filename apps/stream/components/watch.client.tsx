@@ -8,6 +8,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { useListening } from "@phantom/ui";
 import { AppHeader } from "@/components/app-header";
 import { WatchlistButton } from "@/components/watchlist-button";
 import { BrowseRail } from "@/components/browse-rail";
@@ -130,6 +131,7 @@ export default function WatchPageClient({
   const preferredAudioLanguage = normalizeAudioLanguage(
     playerPrefs.audioLanguage,
   );
+  const { listening } = useListening();
   const router = useSourceRouter({
     videoRef,
     media,
@@ -137,6 +139,7 @@ export default function WatchPageClient({
     episode,
     sources,
     preferredAudioLanguage,
+    listening,
   });
   const { state } = router;
   const status = STAGE_STATUS[state.phase] ?? "idle";
@@ -464,8 +467,11 @@ export default function WatchPageClient({
             total: state.total,
             elapsedMs: state.raceElapsedMs,
           }}
-          quality={qualityMenu}
+          quality={listening ? undefined : qualityMenu}
           language={languageMenu}
+          listeningPlan={state.listening}
+          listeningArtwork={media.posterUrl}
+          listeningBackdrop={currentEpisode?.stillUrl ?? media.backdropUrl}
           sources={sourceMenu}
           captions={captionChoices}
           trackKey={trackKey}
