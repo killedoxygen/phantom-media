@@ -15,11 +15,13 @@ import {
   applyPlaybackSnapshot,
   capturePlaybackSnapshot,
   type AudioState,
+  type ListeningRequest,
   type PlaybackSnapshot,
   type PlayerController,
   type QualityLevel,
   type QualityState,
 } from "@/lib/player";
+import type { ListeningPlan } from "@phantom/ui/listening";
 import { debug } from "@/lib/debug";
 import {
   PINNED_STARTUP_TIMEOUT_MS,
@@ -102,6 +104,8 @@ export interface RouterState {
   levels: readonly QualityLevel[];
   quality: QualityState;
   audio: AudioState;
+  /** What listening does for the attached source, or null while watching. */
+  listening: ListeningPlan | null;
   progress: readonly SourceProgress[];
   answered: number;
   asking: number;
@@ -156,6 +160,7 @@ function initialState(total: number): RouterState {
     levels: [],
     quality: { selected: -1, effective: -1 },
     audio: { tracks: [], selected: -1 },
+    listening: null,
     progress: [],
     answered: 0,
     asking: 0,
@@ -175,6 +180,8 @@ export interface UseSourceRouterOptions {
   episode: number;
   sources: readonly SourceEntry[];
   preferredAudioLanguage: string;
+  /** Listen instead of watch: every source is attached for its sound, through failover and recovery too. */
+  listening?: boolean;
 }
 
 export function useSourceRouter({
@@ -184,6 +191,7 @@ export function useSourceRouter({
   episode,
   sources,
   preferredAudioLanguage,
+  listening = false,
 }: UseSourceRouterOptions) {
   const initialAudioLanguage = normalizeAudioLanguage(preferredAudioLanguage);
   const [state, setState] = useState<RouterState>(() =>
@@ -191,6 +199,13 @@ export function useSourceRouter({
   );
 
   const controllerRef = useRef<PlayerController | null>(null);
+  const listeningRef = useRef(listening);
+  const applyListeningRef = useRef<() => void>(() => {});
+  const attachedRef = useRef<{
+    candidate: StreamCandidate;
+    sourceId: string;
+    allowUnverifiedAudio: boolean;
+  } | null>(null);
   const unsubscribeQualityRef = useRef<(() => void) | null>(null);
   const unsubscribeAudioRef = useRef<(() => void) | null>(null);
   const fetchControllerRef = useRef<AbortController | null>(null);
@@ -317,6 +332,7 @@ export function useSourceRouter({
       levels: [],
       quality: { selected: -1, effective: -1 },
       audio: { tracks: [], selected: -1 },
+      listening: null,
     });
   }, [patch]);
 
@@ -329,7 +345,11 @@ export function useSourceRouter({
       unsubscribeAudioRef.current = controller.subscribeAudio((audio) =>
         patch({ audio }),
       );
-      patch({ levels: controller.levels, audio: controller.audio() });
+      patch({
+        levels: controller.levels,
+        audio: controller.audio(),
+        listening: controller.listening(),
+      });
     },
     [patch],
   );
@@ -373,9 +393,11 @@ export function useSourceRouter({
 
       detach();
       const startedAt = performance.now();
+      const attachedListening = listeningRef.current;
 
       const controller = await attachCandidate(video, candidate, {
         timeoutMs,
+        listening: attachedListening ? { language: normalizedAudioLanguage } : null,
         onFatal: () => {
           if (requestIdRef.current !== requestId) return;
           if (fatalHandledRequestRef.current === requestId) return;
@@ -493,6 +515,11 @@ export function useSourceRouter({
       }
       attachedAtRef.current = Date.now();
       attachedSourceRef.current = sourceId;
+      attachedRef.current = { candidate, sourceId, allowUnverifiedAudio };
+      // The choice changed while this source was attaching.
+      if (attachedListening !== listeningRef.current) {
+        queueMicrotask(() => applyListeningRef.current());
+      }
       record(sourceId, "verified", {
         attached: true,
         ttffMs: performance.now() - startedAt,
@@ -1041,6 +1068,7 @@ export function useSourceRouter({
     fetchControllerRef.current = null;
     detach();
     attachedSourceRef.current = null;
+    attachedRef.current = null;
 
     const video = videoRef.current;
     if (video) {
@@ -1074,6 +1102,59 @@ export function useSourceRouter({
   const setAudioTrack = useCallback((index: number) => {
     controllerRef.current?.setAudioTrack(index);
   }, []);
+
+  const applyListening = useCallback(async () => {
+    const controller = controllerRef.current;
+    const attached = attachedRef.current;
+    // Nothing attached yet: the next attach reads the choice itself.
+    if (!controller || !attached) return;
+    const wanted = listeningRef.current;
+    let result: "applied" | "reattach";
+    try {
+      result = await controller.setListening(
+        wanted ? { language: normalizedAudioLanguage } : null,
+      );
+    } catch {
+      result = "applied";
+    }
+    if (controllerRef.current !== controller || listeningRef.current !== wanted) return;
+    if (result === "applied") {
+      patch({ listening: controller.listening() });
+      return;
+    }
+    // The sound and the picture come from different streams: attach the same candidate again, from the same moment.
+    const handoff = capturePlaybackSnapshot(videoRef.current, controller);
+    const requestId = ++requestIdRef.current;
+    debug("attach", "listening.reattach", {
+      source: attached.sourceId,
+      listening: wanted,
+    });
+    attachOne(
+      attached.candidate,
+      attached.sourceId,
+      requestId,
+      handoff?.currentTime || null,
+      STARTUP_TIMEOUT_MS,
+      attached.allowUnverifiedAudio,
+      handoff,
+    ).catch((error: Error) => {
+      if (error.message === "superseded" || requestIdRef.current !== requestId) return;
+      // Let the router find a way back, keeping the moment and the listening choice.
+      handoffRef.current = handoff;
+      runGuardRef.current.clear();
+      startRef.current({ recovery: true, handoff });
+    });
+  }, [attachOne, normalizedAudioLanguage, patch, videoRef]);
+
+  useEffect(() => {
+    applyListeningRef.current = () => void applyListening();
+  }, [applyListening]);
+
+  useEffect(() => {
+    if (listeningRef.current === listening) return;
+    listeningRef.current = listening;
+    applyListeningRef.current();
+  }, [listening]);
 
   const selectCandidate = useCallback(
     (candidateId: string) => {

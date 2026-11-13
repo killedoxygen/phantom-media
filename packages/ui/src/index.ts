@@ -48,7 +48,7 @@ export type { StageFeedback } from "./use-stage-playback";
 export { normalizePlaybackSegments, projectPlaybackSegment, playbackSegmentLabelsAt, segmentAppearance } from "./playback-segments";
 export type { PlaybackSegment, SegmentAppearance, SegmentAppearances } from "./playback-segments";
 
-export { describeListeningPlan, isAudioOnlyCodecs, parseHlsAttributes, pickListeningFile, planHlsListening } from "./listening";
+export { describeListeningPlan, isAudioOnlyCodecs, parseHlsAttributes, pickListeningFile, planHlsListening, planLowestRung } from "./listening";
 export type { ListeningMode, ListeningPlan } from "./listening";
 export { useHlsListeningPlan, useListening } from "./use-listening";
 export type { Listening, ListeningPreferences } from "./use-listening";

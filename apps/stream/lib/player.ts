@@ -16,6 +16,11 @@ import type {
   QualityChangeRenderedEvent,
   TrackChangeRenderedEvent,
 } from "dashjs";
+import {
+  planHlsListening,
+  planLowestRung,
+  type ListeningPlan,
+} from "@phantom/ui/listening";
 import { asSettled } from "./concurrent";
 import { debug, span } from "./debug";
 import { languageName, normalizeLanguage } from "./subtitles";
@@ -23,6 +28,7 @@ import type { StreamCandidate } from "./types";
 import {
   UNVERIFIED_AUDIO_LANGUAGE,
   candidateAudioLanguages,
+  listeningAudioFits,
   normalizeAudioLanguage,
 } from "../src/media-language.mjs";
 import { manifestVideoHeight } from "../src/media-quality.mjs";
@@ -107,6 +113,94 @@ export interface PlayerController {
   audio(): AudioState;
   setAudioTrack(index: number): void;
   subscribeAudio(listener: (state: AudioState) => void): () => void;
+  /** What listening does for this source right now, or null while watching. */
+  listening(): ListeningPlan | null;
+  /**
+   * Start or stop listening in place. Answers "reattach" when the source has to be attached again for it, because
+   * an audio-only stream replaces the picture's stream (or the reverse).
+   */
+  setListening(request: ListeningRequest | null): Promise<ListeningSwitch>;
+}
+
+/** Listening as asked for at attach time or later. */
+export interface ListeningRequest {
+  /** The audio language the viewer chose; an audio rendition is only played on its own when it matches. */
+  language: string;
+}
+
+export type ListeningSwitch = "applied" | "reattach";
+
+type AudioListeningPlan = Extract<ListeningPlan, { kind: "audio" }>;
+const UNTHINNED: ListeningPlan = { kind: "unavailable" };
+const LISTENING_PLAN_TTL_MS = 60_000;
+const LISTENING_PLAN_TIMEOUT_MS = 4_000;
+const listeningPlans = new Map<
+  string,
+  { at: number; plan: Promise<AudioListeningPlan | null> }
+>();
+
+/**
+ * The audio-only stream an HLS master offers in the requested language, or null when it offers none.
+ * Remembered briefly, since switching to it re-attaches the source and asks again.
+ */
+function audioOnlyPlan(
+  url: string,
+  request: ListeningRequest,
+  timeoutMs: number,
+): Promise<AudioListeningPlan | null> {
+  const key = `${url}\n${request.language}`;
+  const cached = listeningPlans.get(key);
+  if (cached && Date.now() - cached.at < LISTENING_PLAN_TTL_MS) return cached.plan;
+  const plan = (async () => {
+    const abort = new AbortController();
+    const timer = window.setTimeout(() => abort.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { signal: abort.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const found = planHlsListening(await response.text(), response.url || url, {
+        language:
+          request.language === UNVERIFIED_AUDIO_LANGUAGE ? undefined : request.language,
+      });
+      return found.kind === "audio" && listeningAudioFits(found, request.language)
+        ? found
+        : null;
+    } catch (error) {
+      // A failed read is not an answer: ask again next time.
+      listeningPlans.delete(key);
+      debug("attach", "listening.plan-failed", {
+        host: hostOf(url),
+        message: (error as Error)?.message,
+      });
+      return null;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  })();
+  listeningPlans.set(key, { at: Date.now(), plan });
+  if (listeningPlans.size > 32) {
+    listeningPlans.delete(listeningPlans.keys().next().value!);
+  }
+  return plan;
+}
+
+function forgetAudioOnlyPlan(url: string, request: ListeningRequest) {
+  listeningPlans.set(`${url}\n${request.language}`, {
+    at: Date.now(),
+    plan: Promise.resolve(null),
+  });
+}
+
+/**
+ * iPhone and iPad Safari stop feeding Media Source buffers once the page is in the background, which ends a
+ * listening session at the lock screen. Their own HLS playback keeps going, so listening uses it there.
+ */
+function prefersNativeListening(video: HTMLVideoElement): boolean {
+  return (
+    typeof window !== "undefined" &&
+    "ManagedMediaSource" in window &&
+    navigator.maxTouchPoints > 1 &&
+    video.canPlayType("application/vnd.apple.mpegurl") !== ""
+  );
 }
 
 export interface PlaybackSnapshot {
@@ -208,11 +302,20 @@ function nativeAudioTracks(video: HTMLVideoElement): NativeAudioTrackList | null
   );
 }
 
+interface NativeListening {
+  /** The HLS master behind this source, when the browser plays HLS itself and could switch to its audio. */
+  master: string | null;
+  /** What was attached: an audio-only stream, the full source while listening, or null while watching. */
+  plan: ListeningPlan | null;
+}
+
 function nativeController(
   video: HTMLVideoElement,
   destroy: () => void,
+  initialListening: NativeListening = { master: null, plan: null },
 ): PlayerController {
   const nativeTracks = nativeAudioTracks(video);
+  let listening = initialListening.plan;
   const listeners = new Set<(state: AudioState) => void>();
   const audio = (): AudioState => {
     if (!nativeTracks) return NO_AUDIO;
@@ -265,6 +368,21 @@ function nativeController(
       return () => {
         listeners.delete(listener);
       };
+    },
+    listening: () => listening,
+    setListening: async (request) => {
+      if (listening?.kind === "audio") return request ? "applied" : "reattach";
+      if (!request) {
+        listening = null;
+        return "applied";
+      }
+      const { master } = initialListening;
+      if (master && (await audioOnlyPlan(master, request, LISTENING_PLAN_TIMEOUT_MS))) {
+        return "reattach";
+      }
+      // A whole file cannot drop its picture: hide it and keep playing.
+      listening = UNTHINNED;
+      return "applied";
     },
   };
 }
@@ -554,6 +672,7 @@ function waitForNativeMedia(
   video: HTMLVideoElement,
   timeoutMs: number,
   onFatal: (error: Error) => void,
+  listening?: NativeListening,
 ): Promise<PlayerController> {
   return new Promise((resolve, reject) => {
     let ready = false;
@@ -571,7 +690,7 @@ function waitForNativeMedia(
           cleanup();
           video.removeAttribute("src");
           video.load();
-        }),
+        }, listening),
       );
     };
     const onError = () => {
@@ -628,7 +747,42 @@ async function attachHls(
   timeoutMs: number,
   onFatal: (error: Error) => void,
   embeddedAudioLanguage?: "en",
+  listeningRequest: ListeningRequest | null = null,
 ): Promise<PlayerController> {
+  const audioPlan = listeningRequest
+    ? await audioOnlyPlan(url, listeningRequest, Math.min(timeoutMs, LISTENING_PLAN_TIMEOUT_MS))
+    : null;
+  let hls: Hls;
+  let audioSource = false;
+  if (audioPlan && listeningRequest) {
+    try {
+      hls = await startHls(video, audioPlan.url, timeoutMs, embeddedAudioLanguage);
+      audioSource = true;
+    } catch (error) {
+      // The audio-only stream is not worth losing the title over: play the full source, at its cheapest.
+      debug("attach", "listening.audio-failed", {
+        host: hostOf(audioPlan.url),
+        message: (error as Error)?.message,
+      });
+      forgetAudioOnlyPlan(url, listeningRequest);
+      hls = await startHls(video, url, timeoutMs, embeddedAudioLanguage);
+    }
+  } else {
+    hls = await startHls(video, url, timeoutMs, embeddedAudioLanguage);
+  }
+  return hlsController(video, hls, audioSource ? audioPlan!.url : url, {
+    onFatal,
+    master: url,
+    listening: listeningRequest ? (audioSource ? audioPlan : "cap") : null,
+  });
+}
+
+async function startHls(
+  video: HTMLVideoElement,
+  url: string,
+  timeoutMs: number,
+  embeddedAudioLanguage?: "en",
+): Promise<Hls> {
   const hls = new Hls({
     ...(embeddedAudioLanguage === "en"
       ? { fLoader: EnglishAudioFragmentLoader as unknown as FragmentLoaderConstructor }
@@ -677,20 +831,71 @@ async function attachHls(
     hls.destroy();
     throw error;
   });
+  return hls;
+}
 
-  const levels: QualityLevel[] = hls.levels.map((level, index) => ({
-    index,
-    label: levelLabel(level.height ?? 0, level.bitrate ?? 0),
-    height: level.height ?? 0,
-    bitrate: level.bitrate ?? 0,
-  }));
+function hlsController(
+  video: HTMLVideoElement,
+  hls: Hls,
+  url: string,
+  {
+    onFatal,
+    master,
+    listening: initialListening,
+  }: {
+    onFatal: (error: Error) => void;
+    /** The source's own master, for switching to its audio-only stream. */
+    master: string;
+    /** An audio-only stream now playing, "cap" for the cheapest picture, or null while watching. */
+    listening: AudioListeningPlan | "cap" | null;
+  },
+): PlayerController {
+  const audioSource = initialListening !== null && initialListening !== "cap";
+  // An audio-only stream has no pictures to choose between.
+  const levels: QualityLevel[] = audioSource
+    ? []
+    : hls.levels.map((level, index) => ({
+        index,
+        label: levelLabel(level.height ?? 0, level.bitrate ?? 0),
+        height: level.height ?? 0,
+        bitrate: level.bitrate ?? 0,
+      }));
+
+  // The viewer's quality choice, held while listening caps the picture and restored after.
+  let chosenLevel = -1;
+  let capped = false;
+  let listening: ListeningPlan | null = audioSource ? initialListening : null;
+  const cap = (on: boolean) => {
+    if (on === capped || hls.levels.length < 2) return;
+    capped = on;
+    if (on) {
+      chosenLevel = hls.manualLevel;
+      const lowest = hls.levels.reduce(
+        (low, level, index) =>
+          (level.bitrate ?? Infinity) < (hls.levels[low]!.bitrate ?? Infinity) ? index : low,
+        0,
+      );
+      // Switch at the next segment rather than flushing what is already buffered.
+      hls.loadLevel = -1;
+      hls.autoLevelCapping = lowest;
+      hls.nextLoadLevel = lowest;
+    } else {
+      hls.autoLevelCapping = -1;
+      if (chosenLevel >= 0) hls.loadLevel = chosenLevel;
+    }
+    publish();
+  };
 
   const listeners = new Set<(state: QualityState) => void>();
   const audioListeners = new Set<(state: AudioState) => void>();
-  const quality = (): QualityState => ({
-    selected: hls.autoLevelEnabled ? -1 : hls.currentLevel,
-    effective: hls.currentLevel,
-  });
+  const quality = (): QualityState => {
+    if (audioSource) return { selected: chosenLevel, effective: -1 };
+    if (capped) return { selected: chosenLevel, effective: hls.currentLevel };
+    return {
+      selected: hls.autoLevelEnabled ? -1 : hls.currentLevel,
+      effective: hls.currentLevel,
+    };
+  };
   const audio = (): AudioState => ({
     tracks: hls.audioTracks.map((track, index) =>
       audioTrack(
@@ -812,6 +1017,13 @@ async function attachHls(
     onFatal(new Error(data.details || "The stream stopped"));
   };
 
+  if (initialListening === "cap") {
+    cap(true);
+    listening = capped
+      ? planLowestRung(url, hls.levels.map((level) => level.bitrate ?? 0))
+      : UNTHINNED;
+  }
+
   hls.on(Hls.Events.ERROR, onError);
   hls.on(Hls.Events.LEVEL_SWITCHED, publish);
   hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, publishAudio);
@@ -836,6 +1048,13 @@ async function attachHls(
     levels,
     quality,
     setLevel: (index: number) => {
+      if (audioSource || capped) {
+        // Kept for when the picture comes back.
+        chosenLevel =
+          index >= 0 && (audioSource || index < hls.levels.length) ? index : -1;
+        publish();
+        return;
+      }
       hls.currentLevel = index;
       if (index >= 0) hls.nextLevel = index;
       publish();
@@ -859,6 +1078,25 @@ async function attachHls(
       return () => {
         audioListeners.delete(listener);
       };
+    },
+    listening: () => listening,
+    setListening: async (request) => {
+      if (audioSource) return request ? "applied" : "reattach";
+      if (!request) {
+        cap(false);
+        listening = null;
+        return "applied";
+      }
+      if (prefersNativeListening(video)) return "reattach";
+      if (await audioOnlyPlan(master, request, LISTENING_PLAN_TIMEOUT_MS)) {
+        return destroyed ? "applied" : "reattach";
+      }
+      if (destroyed) return "applied";
+      cap(true);
+      listening = capped
+        ? planLowestRung(url, hls.levels.map((level) => level.bitrate ?? 0))
+        : UNTHINNED;
+      return "applied";
     },
   };
 }
@@ -891,6 +1129,7 @@ async function attachDash(
   url: string,
   timeoutMs: number,
   onFatal: (error: Error) => void,
+  listeningRequest: ListeningRequest | null = null,
 ): Promise<PlayerController> {
   if (typeof MediaSource === "undefined") {
     throw new Error("This browser cannot play DASH streams");
@@ -914,7 +1153,8 @@ async function attachDash(
         IndexSegment: 3,
       },
       abr: {
-        initialBitrate: { video: 3_000 },
+        // Listening starts at the cheapest picture instead of climbing down to it.
+        initialBitrate: { video: listeningRequest ? 1 : 3_000 },
       },
     },
   });
@@ -986,6 +1226,34 @@ async function attachDash(
     for (const listener of qualityListeners) listener(state);
   };
 
+  // DASH has no audio-only switch in dash.js, so listening holds the picture at its cheapest representation.
+  let listening: ListeningPlan | null = null;
+  const applyLevel = (immediate: boolean) => {
+    const lowest = representations.reduce(
+      (low, representation, index) =>
+        (representation.bandwidth ?? Infinity) <
+        (representations[low]?.bandwidth ?? Infinity)
+          ? index
+          : low,
+      0,
+    );
+    const capped = listening?.kind === "reduced";
+    const target = capped ? lowest : selectedLevel;
+    player.updateSettings({
+      streaming: { abr: { autoSwitchBitrate: { video: target === -1 } } },
+    });
+    if (target >= 0) {
+      player.setRepresentationForTypeByIndex("video", target, immediate && !capped);
+    }
+    publishQuality();
+  };
+  const listen = (request: ListeningRequest | null) => {
+    listening = request
+      ? planLowestRung(url, representations.map((representation) => representation.bandwidth ?? 0))
+      : null;
+    applyLevel(false);
+  };
+
   const refreshAudio = () => {
     dashAudioInfos = player.getTracksFor("audio");
   };
@@ -1037,6 +1305,7 @@ async function attachDash(
     onFatal(new Error(dashErrorMessage(event)));
   };
 
+  if (listeningRequest) listen(listeningRequest);
   refreshAudio();
   player.on(MediaPlayer.events.ERROR, onError);
   player.on(MediaPlayer.events.QUALITY_CHANGE_RENDERED, onQualityChanged);
@@ -1054,17 +1323,7 @@ async function attachDash(
     setLevel: (index: number) => {
       selectedLevel =
         index >= 0 && index < representations.length ? index : -1;
-      player.updateSettings({
-        streaming: {
-          abr: {
-            autoSwitchBitrate: { video: selectedLevel === -1 },
-          },
-        },
-      });
-      if (selectedLevel >= 0) {
-        player.setRepresentationForTypeByIndex("video", selectedLevel, true);
-      }
-      publishQuality();
+      applyLevel(true);
     },
     subscribeQuality: (listener) => {
       qualityListeners.add(listener);
@@ -1087,6 +1346,11 @@ async function attachDash(
         audioListeners.delete(listener);
       };
     },
+    listening: () => listening,
+    setListening: async (request) => {
+      if (!destroyed) listen(request);
+      return "applied";
+    },
   };
 }
 
@@ -1096,8 +1360,11 @@ export async function attachCandidate(
   options: {
     timeoutMs?: number;
     onFatal: (error: Error) => void;
+    /** Attach for listening: the audio-only stream when the source has one, else its cheapest picture. */
+    listening?: ListeningRequest | null;
   },
 ): Promise<PlayerController> {
+  const listening = options.listening ?? null;
   const timeoutMs = options.timeoutMs ?? 5_000;
   const done = span("attach", "element", {
     host: hostOf(candidate.url),
@@ -1117,13 +1384,18 @@ export async function attachCandidate(
   };
 
   if (candidate.type === "hls") {
-    if (Hls.isSupported()) {
+    const nativeListening =
+      listening !== null &&
+      !candidate.embeddedAudioLanguage &&
+      prefersNativeListening(video);
+    if (Hls.isSupported() && !nativeListening) {
       return finish(attachHls(
         video,
         candidate.url,
         timeoutMs,
         options.onFatal,
         candidate.embeddedAudioLanguage,
+        listening,
       ));
     }
     if (candidate.embeddedAudioLanguage) {
@@ -1137,11 +1409,20 @@ export async function attachCandidate(
   }
 
   if (candidate.type === "dash") {
-    return finish(attachDash(video, candidate.url, timeoutMs, options.onFatal));
+    return finish(attachDash(video, candidate.url, timeoutMs, options.onFatal, listening));
   }
 
-  const pending = waitForNativeMedia(video, timeoutMs, options.onFatal);
-  video.src = candidate.url;
+  // Safari's own HLS can still switch to an audio-only stream; a whole file only hides its picture.
+  const master = candidate.type === "hls" ? candidate.url : null;
+  const audioPlan =
+    listening && master
+      ? await audioOnlyPlan(master, listening, Math.min(timeoutMs, LISTENING_PLAN_TIMEOUT_MS))
+      : null;
+  const pending = waitForNativeMedia(video, timeoutMs, options.onFatal, {
+    master,
+    plan: listening ? (audioPlan ?? UNTHINNED) : null,
+  });
+  video.src = audioPlan?.url ?? candidate.url;
   video.load();
   return finish(pending);
 }

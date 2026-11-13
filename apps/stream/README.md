@@ -245,6 +245,16 @@ has to reach into attachment and failure handling.
   remembered. The source override keeps stable Source numbers but orders
   verified/current entries first and shows green, orange, red or grey status
   indicators for availability.
+- Audio only, like a podcast, from the headphones button or the audio sheet.
+  An HLS source with an audio-only stream (an audio-only variant, or an audio
+  rendition in the chosen language) is attached again on that stream from the
+  same moment, so no picture is downloaded. Without one, HLS and DASH hold the
+  picture at their cheapest rendition behind the poster, and a progressive file
+  only hides it. The choice is remembered and applies through failover and
+  recovery. Voice boost evens out quiet and loud speech and mono folds both
+  channels into each ear, both through Web Audio, except on iPhone and iPad,
+  where Web Audio would stop with the screen locked. There, listening to HLS
+  uses Safari's own playback, which keeps going in the background.
 - Resuming says so, dismissibly, with a way to start over. It used to seek
   silently.
 - The full episode list inside the picture, so changing episode never means
