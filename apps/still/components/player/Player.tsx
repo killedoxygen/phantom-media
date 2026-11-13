@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { StageTransport } from "@phantom/ui";
+import { ListeningStage, StageTransport, useAudioEnhancement, useListening } from "@phantom/ui";
 import type { PlaybackSegment, SegmentAppearances } from "@phantom/ui";
 import { EMPTY_PLAYBACK_SEGMENTS } from "@phantom/ui/playback-segments";
 import { Chrome } from "./chrome";
@@ -19,8 +19,14 @@ import { PlayerStage } from "./PlayerStage";
 interface PlayerProps {
   src: string;
   delivery?: "hls" | "file";
+  /** Only the sound plays: the cover replaces the picture and picture-only controls step aside. */
   audioOnly?: boolean;
+  /** Offered when the source can be listened to. The page picks the source, since that is where it lives. */
   onAudioOnlyChange?: (enabled: boolean) => void;
+  /** What listening does for this source, shown with the audio-only switch. */
+  listeningNote?: string;
+  /** A square cover for listening, such as the channel image. Falls back to the artwork. */
+  cover?: string;
   sourceSelection?: SourceSelection;
   onMediaError?: (kind: "network" | "media") => void;
   onVideoSize?: (source: string, width: number, height: number) => void;
@@ -41,7 +47,7 @@ interface PlayerProps {
   onChatToggle?: () => void;
 }
 
-export function Player({ src, delivery = "hls", audioOnly = false, onAudioOnlyChange, sourceSelection, seekRequest, storyboardUrl, onMediaError, onVideoSize, segments = EMPTY_PLAYBACK_SEGMENTS, segmentAppearances,
+export function Player({ src, delivery = "hls", audioOnly = false, onAudioOnlyChange, listeningNote, cover, sourceSelection, seekRequest, storyboardUrl, onMediaError, onVideoSize, segments = EMPTY_PLAYBACK_SEGMENTS, segmentAppearances,
   startTime = 0, isLive = false, dvrMode = false, onTimeUpdate, onPlaybackSeek,
   title = "Twitch video", subtitle, artwork, chatOpen = false, onChatToggle }: PlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -57,6 +63,8 @@ export function Player({ src, delivery = "hls", audioOnly = false, onAudioOnlyCh
   const display = useDisplay(containerRef, videoRef);
   const captions = useCaptions(videoRef, cuesRef, src);
   const controls = useControls(videoRef, media, display, captions.toggle, timeline.canSeek);
+  const listening = useListening();
+  const enhancement = useAudioEnhancement(videoRef, { voiceBoost: listening.voiceBoost, mono: listening.mono, supported: hls.audioProcessing });
   useMediaSession(videoRef, { title, artist: subtitle, artwork, seekable: !isLive, onSeek: syncDisplayedTime });
 
   return (
@@ -66,6 +74,7 @@ export function Player({ src, delivery = "hls", audioOnly = false, onAudioOnlyCh
         <video ref={videoRef} className="absolute inset-0" playsInline preload="metadata"
           controlsList="nodownload noremoteplayback" disablePictureInPicture={!display.pipSupported}
           onClick={controls.onVideoClick} onPointerDown={controls.onVideoPointerDown} />
+        {audioOnly && <ListeningStage artwork={cover ?? artwork} backdrop={artwork} playing={media.playing} />}
         <div ref={cuesRef} className="stage-cues stage-cues-backdrop" />
       </>}>
       {hls.connectionUnstable && <ConnectionWarning />}
@@ -75,7 +84,7 @@ export function Player({ src, delivery = "hls", audioOnly = false, onAudioOnlyCh
         onSeekBack={timeline.canSeek ? () => controls.seekWithFeedback(-1) : undefined}
         onSeekForward={timeline.canSeek ? () => controls.seekWithFeedback(1) : undefined} />
       <Chrome videoRef={videoRef} title={title} isLive={isLive} chatOpen={chatOpen}
-        onChatToggle={onChatToggle} audioOnly={audioOnly} onAudioOnlyChange={onAudioOnlyChange} sourceSelection={sourceSelection} segments={segments} segmentAppearances={segmentAppearances} storyboardUrl={storyboardUrl}
+        onChatToggle={onChatToggle} audioOnly={audioOnly} onAudioOnlyChange={onAudioOnlyChange} listeningNote={listeningNote} listening={listening} enhancement={enhancement.available} sourceSelection={sourceSelection} segments={segments} segmentAppearances={segmentAppearances} storyboardUrl={storyboardUrl}
         media={media} hls={hls} captions={captions} timeline={timeline} display={display} controls={controls} />
     </PlayerStage>
   );

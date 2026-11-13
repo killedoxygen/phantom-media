@@ -1,8 +1,8 @@
 "use client";
 
 import { ChatCircle, Monitor, Timer } from "@phosphor-icons/react/ssr";
-import { ScrubBar, SleepTimerPicker, StageChrome, StageControl, StageSettings, useSleepTimer } from "@phantom/ui";
-import type { PlaybackSegment, SegmentAppearances, SettingsSection } from "@phantom/ui";
+import { ListeningControl, listeningSettingsSections, ScrubBar, SleepTimerPicker, StageChrome, StageControl, StageSettings, useSleepTimer } from "@phantom/ui";
+import type { Listening, PlaybackSegment, SegmentAppearances, SettingsSection } from "@phantom/ui";
 import type { ComponentProps, ReactNode, RefObject } from "react";
 import { formatTime } from "@/lib/format";
 import type { MediaState } from "./use-media";
@@ -23,6 +23,10 @@ export interface SourceSelection {
 interface ChromeProps {
   audioOnly: boolean;
   onAudioOnlyChange?: (enabled: boolean) => void;
+  listeningNote?: string;
+  listening: Listening;
+  /** Voice boost and mono can run on this playback. */
+  enhancement: boolean;
   sourceSelection?: SourceSelection;
   videoRef: RefObject<HTMLVideoElement | null>;
   title: string;
@@ -42,7 +46,7 @@ interface ChromeProps {
 
 const FILLED_ICON = { weight: "fill" as const };
 
-export function Chrome({ videoRef, title, isLive, chatOpen, onChatToggle, segments, segmentAppearances, storyboardUrl, audioOnly, onAudioOnlyChange, sourceSelection,
+export function Chrome({ videoRef, title, isLive, chatOpen, onChatToggle, segments, segmentAppearances, storyboardUrl, audioOnly, onAudioOnlyChange, listeningNote, listening, enhancement, sourceSelection,
   media, hls, captions, timeline, display, controls }: ChromeProps) {
   const { playing, muted, volume, loading, currentTime, duration, speed, toggleMute, changeVolume } = media;
   const { levels, currentLevel } = hls;
@@ -63,11 +67,12 @@ export function Chrome({ videoRef, title, isLive, chatOpen, onChatToggle, segmen
   };
 
   const settingsSections: SettingsSection[] = [
-    ...(onAudioOnlyChange ? [{
-      id: "mode", title: "Playback", value: audioOnly ? "audio" : "video",
-      options: [{ value: "video", label: "Video" }, { value: "audio", label: "Audio only" }],
-      onChange: (value: string) => { onAudioOnlyChange(value === "audio"); changeMenu(null); },
-    }] : []),
+    ...listeningSettingsSections({
+      listening: audioOnly, onListeningChange: onAudioOnlyChange, note: listeningNote,
+      enhancement, voiceBoost: listening.voiceBoost, onVoiceBoostChange: listening.setVoiceBoost,
+      mono: listening.mono, onMonoChange: listening.setMono,
+      onChange: () => changeMenu(null),
+    }),
     ...(!audioOnly && sourceSelection ? [{
       id: "quality", title: "Quality", options: sourceSelection.options, value: sourceSelection.value,
       onChange: (value: string) => { sourceSelection.onChange(value); changeMenu(null); },
@@ -135,7 +140,8 @@ export function Chrome({ videoRef, title, isLive, chatOpen, onChatToggle, segmen
     chatOpen={chatOpen}
     onChatToggle={onChatToggle && !isFullscreen ? onChatToggle : undefined}
     settings={settingsSections}
-    actions={pipSupported ? [{ label: "Picture in picture", icon: <Monitor {...FILLED_ICON} size={20} />, onClick: togglePip }] : []}
+    listening={onAudioOnlyChange ? { active: audioOnly, onChange: onAudioOnlyChange } : undefined}
+    actions={pipSupported && !audioOnly ? [{ label: "Picture in picture", icon: <Monitor {...FILLED_ICON} size={20} />, onClick: togglePip }] : []}
   />;
 }
 
@@ -157,7 +163,7 @@ type PlayerMenu = "settings" | "sleep" | null;
  * script, which is why nothing here reaches for the video itself.
  */
 export function PlayerControls({ ready, title, playing, muted, volume, fullscreen, onTogglePlay, onToggleMute, onVolumeChange, onToggleFullscreen,
-  timeline, clock, onSeekToLive, sleep, menu, onMenuChange, chatOpen, onChatToggle, settings, actions }: {
+  timeline, clock, onSeekToLive, sleep, menu, onMenuChange, chatOpen, onChatToggle, settings, listening, actions }: {
   ready: boolean;
   title: string;
   playing: boolean;
@@ -177,6 +183,8 @@ export function PlayerControls({ ready, title, playing, muted, volume, fullscree
   chatOpen: boolean;
   onChatToggle?: () => void;
   settings: SettingsSection[];
+  /** The toolbar's audio-only switch, when the source can be listened to. */
+  listening?: { active: boolean; onChange: (active: boolean) => void };
   actions: ComponentProps<typeof StageSettings>["actions"];
 }) {
   return (
@@ -206,6 +214,7 @@ export function PlayerControls({ ready, title, playing, muted, volume, fullscree
             {(clock.rewindable || (clock.live && clock.behind)) && (
               <button type="button" onClick={onSeekToLive} disabled={clock.rewindable && clock.lag <= 3} className="stage-control stage-live-trigger min-w-11 text-[12px] font-medium disabled:invisible" aria-label="Jump to live">Live</button>
             )}
+            {listening && <ListeningControl listening={listening.active} onChange={listening.onChange} />}
             <StageControl
               label={sleep.minutes === null ? "Sleep timer" : `Sleep timer, ${sleep.minutesLeft} minutes left`}
               onClick={() => onMenuChange(menu === "sleep" ? null : "sleep")}

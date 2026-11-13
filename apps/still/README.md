@@ -13,7 +13,8 @@ video or clip link; no account, extension, or installation is required.
 - Live rewind and seeking through the current broadcast’s archive while the channel is still live, when an archive is available.
 - Live playback returns to the live edge on resume and automatically recovers excess delay while protecting the playback buffer.
 - Quality selection, playback speed, broadcaster captions, keyboard shortcuts and picture-in-picture.
-- Native clip playback and continuous MP4 downloads; audio-only archive listening.
+- Native clip playback and continuous MP4 downloads.
+- Audio-only listening for live streams, VODs and clips, with voice boost and mono audio.
 - Bounded TS/MP4 downloads with cancellation; growing archives export a captured window.
 - Live chat and offset-based VOD replay with badges, colors and emotes.
 - Channel polls in chat, read-only, with live results and a countdown.
@@ -186,7 +187,10 @@ have none.
 
 Muted windows use silent fallback; no missing-audio recovery is claimed.
 Video adaptation excludes audio renditions; audio-only listening uses its own media
-playlist. Audio downloads retain the actual TS container; MP3/M4A conversion and ASR are
+playlist. Live listening reads the master once and plays Twitch's audio-only
+rendition (about 160 kb/s against 6 Mb/s for 1080p60) through the same ad-filtered
+route. Clips have no audio-only file, so listening plays the smallest one. On iPhone,
+live listening uses Safari's own HLS so the sound continues with the screen locked. Audio downloads retain the actual TS container; MP3/M4A conversion and ASR are
 not included. Blob-only browsers are limited to 256 MB per download; direct file
 saving supports larger transfers.
 
