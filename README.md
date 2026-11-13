@@ -15,6 +15,7 @@ with no app analytics or tracking cookies.
 - **Subscriber-only VODs:** play sub-only broadcasts without signing in when their source playlists are available.
 - **Live rewind and seeking:** open the current broadcast’s archive to catch up while the channel is still live, when an archive is available.
 - **More playback controls:** quality selection, playback speed, broadcaster captions, keyboard shortcuts, picture-in-picture, and VOD downloads.
+- **Listen like a podcast:** audio-only mode for live streams, VODs and clips, with voice boost and mono audio, using a fraction of the data.
 - **Live chat and VOD chat replay:** read chat alongside playback, with replay synchronized to pauses and seeks.
 - **Account-free viewing:** no Twitch login, app analytics, or tracking cookies. History, resume positions, and preferences stay in your browser.
 

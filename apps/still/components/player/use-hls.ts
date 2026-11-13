@@ -8,7 +8,7 @@ import { CONNECTION_ERROR_DETAILS, createConnectionHealth } from "@/lib/media/co
 import { createLiveLatencyController } from "@/lib/media/live-latency";
 import { LiveAbrController } from "@/lib/media/live-abr";
 import { createLiveFragmentLoader } from "@/lib/media/live-loader";
-import { playbackEnvironment, prefersNativeHls } from "@/lib/media/engine";
+import { canProcessAudio, playbackEnvironment, prefersNativeHls } from "@/lib/media/engine";
 
 interface HlsOptions {
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -73,6 +73,7 @@ export function useHls({ videoRef, src, delivery, audioOnly, isLive, dvrMode, st
   const reportError = useEffectEvent((kind: "network" | "media") => onMediaError?.(kind));
   const reportVideoSize = useEffectEvent((source: string, width: number, height: number) => onVideoSize?.(source, width, height));
   const [currentLevel, setCurrentLevel] = useState(-1);
+  const [audioProcessing, setAudioProcessing] = useState(false);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -92,7 +93,9 @@ export function useHls({ videoRef, src, delivery, audioOnly, isLive, dvrMode, st
     const plainLive = isLive && !dvrMode;
     const progressive = plainLive && typeof fetch !== "undefined" && typeof AbortController !== "undefined" &&
       typeof ReadableStream !== "undefined" && typeof Request !== "undefined";
-    const native = delivery === "file" || !Hls.isSupported() || prefersNativeHls(playbackEnvironment(video), isLive);
+    const environment = playbackEnvironment(video);
+    const native = delivery === "file" || !Hls.isSupported() || prefersNativeHls(environment, isLive, audioOnly);
+    setAudioProcessing(canProcessAudio(environment, native ? "native" : "hls.js", delivery));
     const startPosition = !isLive || dvrMode ? resumeTime.current ?? startTime : 0;
     let attachedHls: Hls | null = null;
     let segmentDuration = 2;
@@ -236,7 +239,9 @@ export function useHls({ videoRef, src, delivery, audioOnly, isLive, dvrMode, st
     if (progressive) hls.config.fLoader = createLiveFragmentLoader(hls);
     let levelsSynced = false;
     const sourceUrl = new URL(src, window.location.href);
-    let prefetchEnabled = progressive && sourceUrl.origin === window.location.origin && sourceUrl.pathname === "/api/live/master.m3u8";
+    // Listening plays the live audio media playlist directly, which takes the same predictive delivery.
+    let prefetchEnabled = progressive && sourceUrl.origin === window.location.origin &&
+      (sourceUrl.pathname === "/api/live/master.m3u8" || sourceUrl.pathname === "/api/live/media.m3u8");
     let prefetchFailures = 0;
     let fallbackQuality: string | null = null;
 
@@ -256,7 +261,8 @@ export function useHls({ videoRef, src, delivery, audioOnly, isLive, dvrMode, st
         .filter((level): level is NonNullable<typeof level> => level !== null);
 
       setLevels(filteredLevels);
-      levelsSynced = filteredLevels.length > 0;
+      // Listening offers no picture qualities; an empty list is the settled answer, not a pending one.
+      levelsSynced = audioOnly || filteredLevels.length > 0;
       const restoredLevel = fallbackQuality === null ? -1 :
         filteredLevels.find(level => level.name === fallbackQuality)?.index ?? -1;
       if ((dvrMode || restoredLevel >= 0) && filteredLevels.length > 0) {
@@ -437,7 +443,7 @@ export function useHls({ videoRef, src, delivery, audioOnly, isLive, dvrMode, st
     setBehindLive(false);
   }, []);
 
-  return { levels, currentLevel, changeQuality, jumpToLive, behindLive, error, connectionUnstable };
+  return { levels, currentLevel, changeQuality, jumpToLive, behindLive, error, connectionUnstable, audioProcessing };
 }
 
 export type HlsState = ReturnType<typeof useHls>;

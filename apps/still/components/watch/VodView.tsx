@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { videoVariants, hasVideoAttributes, videoQualityLabel } from "@/lib/media/variants";
+import { describeListeningPlan, useListening } from "@phantom/ui";
+import { videoVariants, hasVideoAttributes, isAudioVariant, videoQualityLabel } from "@/lib/media/variants";
 import { ResourceNotice } from "../resources/ResourcePage";
 import { RecordingPosition } from "../previews/RecordingPosition";
 import { ChatCircle } from "@phosphor-icons/react/ssr";
@@ -31,7 +32,9 @@ export function VodView({ vodData, masterUrl, startTime, playerTime, onTimeUpdat
     setSeekRequest(previous => ({ position: bounded, revision: (previous?.revision ?? 0) + 1 }));
     onTimeUpdate(bounded); setPlaybackSeekVersion(value => value + 1);
   }, [vodData.duration, onTimeUpdate]);
-  const [mode, setMode] = useState<"video" | "audio">("video");
+  const audioVariant = vodData.qualities.find(isAudioVariant);
+  const listening = useListening(Boolean(audioVariant));
+  const mode = listening.listening ? "audio" : "video";
   const [quality, setQuality] = useState("");
   const [sourceTime, setSourceTime] = useState(startTime);
   const [decodedSizes, setDecodedSizes] = useState<Record<string, string>>({});
@@ -53,6 +56,8 @@ export function VodView({ vodData, masterUrl, startTime, playerTime, onTimeUpdat
     value: activeQuality ?? "",
     onChange: (key: string) => { setSourceTime(playerTime); setQuality(key); },
   } : undefined;
+  const videoBandwidth = Math.max(0, ...variants.map(variant => variant.bandwidth ?? 0)) || undefined;
+  const listeningNote = describeListeningPlan(audioVariant ? { kind: "audio", url: "", bandwidth: audioVariant.bandwidth, videoBandwidth } : null);
   const sourceUrl = mode === "audio" ? `${masterUrl}&mode=audio` : quality ? `${masterUrl}&quality=${encodeURIComponent(quality)}` : masterUrl;
   const timelineSegments = useMemo(() => [...vodData.segments, ...vodData.chapters.map(chapter => ({ id: `chapter:${chapter.id}`, kind: "chapter", start: chapter.start, end: chapter.end, label: chapter.title }))], [vodData.segments, vodData.chapters]);
   const watchChat = useWatchChat();
@@ -72,7 +77,8 @@ export function VodView({ vodData, masterUrl, startTime, playerTime, onTimeUpdat
           video={masterUrl ? <Player seekRequest={seekRequest} src={sourceUrl} audioOnly={mode === "audio"} title={vodData.title || `Video ${vodData.vodId}`} subtitle={vodData.channelDisplayName || vodData.channel} artwork={vodData.previewThumbnailURL}
             startTime={sourceTime} isLive={Boolean(vodData.isLiveArchive)} dvrMode={Boolean(vodData.isLiveArchive)}
             segments={timelineSegments} storyboardUrl={vodData.seekPreviewsURL} sourceSelection={sourceSelection}
-            onAudioOnlyChange={vodData.qualities.some(variant => variant.kind === "audio") ? enabled => { setSourceTime(playerTime); setMode(enabled ? "audio" : "video"); } : undefined}
+            onAudioOnlyChange={audioVariant ? enabled => { setSourceTime(playerTime); listening.setMode(enabled ? "audio" : "video"); } : undefined}
+            listeningNote={listeningNote} cover={vodData.channelProfileImageURL}
             onVideoSize={onVideoSize} onTimeUpdate={onTimeUpdate} onPlaybackSeek={onPlaybackSeek} chatOpen={chatOpen} onChatToggle={toggleChat} /> : <div className="still-recording-unavailable"><ResourceNotice title="Video unavailable">Metadata and chat replay remain available.</ResourceNotice>
             <RecordingPosition label="Replay position" position={playerTime} duration={vodData.duration} onSeek={seek} segments={timelineSegments} /></div>}
           rail={<WatchRail channel={vodData.channel} displayName={vodData.channelDisplayName} image={vodData.channelProfileImageURL} verified={vodData.channelIsPartner}

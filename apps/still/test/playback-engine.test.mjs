@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { prefersNativeHls } from "../lib/media/engine.ts";
+import { canProcessAudio, prefersNativeHls } from "../lib/media/engine.ts";
 
 const iphone = { mediaSource: false, managedMediaSource: true, nativeHls: true };
 
@@ -19,4 +19,18 @@ test("browsers with the classic MediaSource keep hls.js", () => {
 
 test("a ManagedMediaSource without native HLS keeps hls.js", () => {
   assert.equal(prefersNativeHls({ mediaSource: false, managedMediaSource: true, nativeHls: false }, false), false);
+});
+
+test("listening to live on iPhone uses Safari's own HLS, so the screen can lock", () => {
+  assert.equal(prefersNativeHls(iphone, true, true), true);
+  assert.equal(prefersNativeHls({ mediaSource: true, managedMediaSource: true, nativeHls: true }, true, true), false);
+});
+
+test("audio processing needs readable media and a platform that keeps Web Audio running", () => {
+  const desktop = { mediaSource: true, managedMediaSource: false, nativeHls: false };
+  assert.equal(canProcessAudio(desktop, "hls.js", "hls"), true);
+  assert.equal(canProcessAudio(desktop, "native", "file"), true);
+  assert.equal(canProcessAudio(desktop, "native", "hls"), false);
+  assert.equal(canProcessAudio({ ...iphone, mobileWebKit: true }, "hls.js", "hls"), false);
+  assert.equal(canProcessAudio({ ...iphone, mobileWebKit: true }, "native", "file"), false);
 });
