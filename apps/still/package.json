@@ -1,6 +1,6 @@
 {
   "name": "@phantom/still",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "private": true,
   "description": "Still: ad-free Twitch player with subscriber-only VODs, archive-based live rewind, and account-free viewing.",
   "scripts": {

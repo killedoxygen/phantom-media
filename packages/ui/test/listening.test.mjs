@@ -55,6 +55,25 @@ test("an alternate audio rendition plays on its own, in the preferred language",
   assert.equal(planHlsListening(master, base, { language: "fr" }).url, "https://media.example/live/audio/es.m3u8");
 });
 
+test("regional audio preferences use an exact match before another variant of the language", () => {
+  const master = [
+    "#EXTM3U",
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",LANGUAGE="es",DEFAULT=YES,URI="audio/es.m3u8"',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",LANGUAGE="en-US",URI="audio/us.m3u8"',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",LANGUAGE="en-GB",URI="audio/gb.m3u8"',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="unused",LANGUAGE="en-AU",URI="audio/au.m3u8"',
+    '#EXT-X-STREAM-INF:BANDWIDTH=5000000,CODECS="avc1.640028,mp4a.40.2",AUDIO="aac"',
+    "video/1080.m3u8",
+  ].join("\n");
+  const audioUrl = language => planHlsListening(master, base, { language }).url;
+
+  assert.equal(audioUrl("en-GB"), "https://media.example/live/audio/gb.m3u8");
+  assert.equal(audioUrl("EN-gb"), "https://media.example/live/audio/gb.m3u8");
+  assert.equal(audioUrl("en-AU"), "https://media.example/live/audio/us.m3u8");
+  assert.equal(audioUrl("en"), "https://media.example/live/audio/us.m3u8");
+  assert.equal(audioUrl("fr-CA"), "https://media.example/live/audio/es.m3u8");
+});
+
 test("without audio of its own, the smallest picture plays", () => {
   const master = [
     "#EXTM3U",

@@ -1,5 +1,15 @@
 # @phantom/downloader
 
+## 0.1.4
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [cdf60df]
+- Updated dependencies [ef80b46]
+  - @phantom/ui@0.4.0
+  - @phantom/theme@0.3.0
+
 ## 0.1.3
 
 ### Patch Changes

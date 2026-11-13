@@ -1,6 +1,6 @@
 {
   "name": "@phantom/stream",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Phantom Stream provides keyless film and series discovery with a source-routing player.",

@@ -1,6 +1,6 @@
 {
   "name": "@phantom/ui",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "React components shared by the Phantom apps. Consumed as source and compiled by each app.",

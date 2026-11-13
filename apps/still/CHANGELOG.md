@@ -1,5 +1,20 @@
 # @phantom/still
 
+## 0.4.0
+
+### Minor Changes
+
+- cdf60df: Add listening mode. `@phantom/ui` gains a source-agnostic audio-only layer: `planHlsListening` picks the cheapest stream that still carries the sound from any HLS master (an audio-only variant, an alternate audio rendition, or the smallest picture), `pickListeningFile` does the same for file sources, `useListening` remembers the choice in the browser, `useAudioEnhancement` adds voice boost and mono through Web Audio without ever leaving the player silent, and `ListeningStage`, `ListeningControl` and `listeningSettingsSections` give every player the same cover, toolbar switch and settings rows. Still uses it for live streams, live rewind, VODs and clips: live listening plays Twitch's 160 kb/s audio rendition instead of up to 6 Mb/s of video, the toolbar has an audio-only switch, and on iPhone live listening keeps playing with the screen locked.
+
+### Patch Changes
+
+- 4747bb1: Play recordings on iPhone through Safari's own HLS so seeks land on the right picture and audio-only keeps playing with the screen locked. Resumed recordings start loading at the resume point. A tap on the video shows or hides the controls on touch screens, and a double tap on either side skips 10 seconds. Lock screen and media keys show the title, channel and thumbnail, and can seek. The resume point is saved every few seconds instead of on every tick.
+- Updated dependencies
+- Updated dependencies [cdf60df]
+- Updated dependencies [ef80b46]
+  - @phantom/ui@0.4.0
+  - @phantom/theme@0.3.0
+
 ## 0.3.3
 
 ### Patch Changes

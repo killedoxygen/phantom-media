@@ -109,8 +109,10 @@ export function planHlsListening(master: string, masterUrl: string, options: { l
   const groups = new Set(variants.map(variant => variant.audioGroup).filter(Boolean));
   const usable = renditions.filter(rendition => !groups.size || (rendition.group && groups.has(rendition.group)));
   if (usable.length) {
+    const exactLanguage = options.language?.toLowerCase();
     const language = primaryLanguage(options.language);
-    const chosen = (language && usable.find(rendition => primaryLanguage(rendition.language) === language)) ||
+    const chosen = (exactLanguage && usable.find(rendition => rendition.language === exactLanguage)) ||
+      (language && usable.find(rendition => primaryLanguage(rendition.language) === language)) ||
       usable.find(rendition => rendition.default) || usable.find(rendition => rendition.autoselect) || usable[0];
     return {
       kind: "audio", url: chosen.url, videoBandwidth,

@@ -1,5 +1,16 @@
 # @phantom/ui
 
+## 0.4.0
+
+### Minor Changes
+
+- cdf60df: Add listening mode. `@phantom/ui` gains a source-agnostic audio-only layer: `planHlsListening` picks the cheapest stream that still carries the sound from any HLS master (an audio-only variant, an alternate audio rendition, or the smallest picture), `pickListeningFile` does the same for file sources, `useListening` remembers the choice in the browser, `useAudioEnhancement` adds voice boost and mono through Web Audio without ever leaving the player silent, and `ListeningStage`, `ListeningControl` and `listeningSettingsSections` give every player the same cover, toolbar switch and settings rows. Still uses it for live streams, live rewind, VODs and clips: live listening plays Twitch's 160 kb/s audio rendition instead of up to 6 Mb/s of video, the toolbar has an audio-only switch, and on iPhone live listening keeps playing with the screen locked.
+- ef80b46: Phantom Stream can play films and episodes as audio only. The choice lives in the player engines, so it survives source failover and recovery. An HLS source with an audio-only stream (an audio-only variant, or an audio rendition in the chosen language) is attached again on it from the same moment. HLS or DASH without one holds the picture at its cheapest rendition behind the poster. `@phantom/ui` adds `planLowestRung` for an engine's own bitrate ladder, gives audio plans their rendition's language, and `ListeningStage` takes a portrait shape for posters; `@phantom/theme` styles it.
+
+### Patch Changes
+
+- Prefer the requested regional audio language in listening mode before falling back to another variant of the same language.
+
 ## 0.3.0
 
 ### Minor Changes

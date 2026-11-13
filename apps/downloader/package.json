@@ -1,6 +1,6 @@
 {
   "name": "@phantom/downloader",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Phantom Downloader pulls a video or a whole playlist down as a file.",
   "scripts": {
